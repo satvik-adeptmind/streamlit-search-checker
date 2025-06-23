@@ -11,17 +11,18 @@ st.set_page_config(
 )
 
 # --- Core Logic Function ---
-# I've moved your script's logic into this function.
-# It now takes parameters from the UI and returns the results.
-def run_analysis(shop_id, environment, search_keyword, check_variations, result_size):
+## NEW: The function now accepts 'check_groups' (a list of lists)
+def run_analysis(shop_id, environment, search_keyword, check_groups, result_size):
     """
     Calls the search API and analyzes the relevance of the results.
+    A product is considered relevant only if it contains a match from EACH check group.
 
     Args:
         shop_id (str): The shop ID.
         environment (str): The environment (prod/dev/stg).
         search_keyword (str): The keyword to search for.
-        check_variations (list): A list of lowercase keywords to check for in the results.
+        check_groups (list of lists): A list where each inner list contains
+                                      variations of a concept to check for.
         result_size (int): The number of results to fetch.
 
     Returns:
@@ -37,7 +38,7 @@ def run_analysis(shop_id, environment, search_keyword, check_variations, result_
 
     try:
         response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
-        response.raise_for_status() # Raises an exception for bad status codes (4xx or 5xx)
+        response.raise_for_status()
 
         products = response.json().get("products", [])
 
@@ -49,20 +50,26 @@ def run_analysis(shop_id, environment, search_keyword, check_variations, result_
         irrelevant_products_data = []
 
         for i, product_payload in enumerate(products):
-            position = i + 1
             product_as_string = json.dumps(product_payload).lower()
 
-            is_relevant = any(variation in product_as_string for variation in check_variations)
+            ## NEW: The core logic change is here!
+            # We use all() to ensure that every group has a match.
+            # We use any() inside to check if any variation within a group matches.
+            # "A product is relevant if for ALL of the check_groups, ANY variation in that group is in the product string."
+            is_relevant = all(
+                any(variation in product_as_string for variation in group)
+                for group in check_groups
+            )
 
             if is_relevant:
                 relevant_count += 1
             else:
                 irrelevant_products_data.append({
-                    "Position": position,
+                    "Position": i + 1,
                     "Product ID": product_payload.get('product_id', 'N/A'),
                     "Product Name": product_payload.get('title', 'N/A')
                 })
-        
+
         return {
             "status": "success",
             "total_products": len(products),
@@ -80,82 +87,109 @@ def run_analysis(shop_id, environment, search_keyword, check_variations, result_
 # --- Streamlit User Interface ---
 
 st.title("🤖 Search Assortment Quality Checker")
-st.markdown("Only use this tool to check for the word that you would have to search in payload of each product for keywords with large number of products")
+st.markdown("Use this tool to check if search results contain **all** the required concepts.")
 
 # --- 1. CONFIGURATION (in the sidebar) ---
 st.sidebar.header("⚙️ Configuration")
 shop_id = st.sidebar.text_input("Shop ID", value="croma")
-environment = st.sidebar.selectbox("Environment", ["prod", "staging"], index=0)
+environment = st.sidebar.selectbox("Environment", ["prod", "dev", "stg"], index=0)
 search_result_size = st.sidebar.number_input("Search Result Size", min_value=1, max_value=1000, value=400)
 
+## NEW: UI logic to add/remove check groups dynamically
+st.sidebar.header("Check Group Management")
+
+# Initialize the number of check groups in session state if it doesn't exist
+if 'num_check_groups' not in st.session_state:
+    st.session_state.num_check_groups = 1
+
+def add_check_group():
+    st.session_state.num_check_groups += 1
+
+def reset_check_groups():
+    # We need to clear the old text input values before reducing the count
+    for i in range(st.session_state.num_check_groups):
+        if f"check_group_{i}" in st.session_state:
+            del st.session_state[f"check_group_{i}"]
+    st.session_state.num_check_groups = 1
+
+st.sidebar.button("Add another check group", on_click=add_check_group, use_container_width=True)
+st.sidebar.button("Reset to 1 check group", on_click=reset_check_groups, use_container_width=True)
+
 # --- 2. USER INPUT (in a form) ---
-# Using a form prevents the app from re-running on every keystroke
 with st.form("search_form"):
     st.subheader("🔍 Search Parameters")
     search_keyword_input = st.text_input(
         "Enter the keyword to SEARCH on the API",
-        placeholder="e.g., ai laptops"
+        placeholder="e.g., samsung hdr10+ laptops"
     )
-    check_keyword_input = st.text_input(
-        "Enter keywords to CHECK FOR in the results (comma-separated)",
-        placeholder="e.g., hdr10+, hdr 10 plus, hdr10plus"
-    )
+
+    st.markdown("---")
+    st.subheader("✅ Required Concepts")
+    st.markdown("A product will be marked relevant **only if it contains a match from EACH group below**.")
+
+    ## NEW: Dynamically create text inputs based on session state
+    check_group_inputs = []
+    for i in range(st.session_state.num_check_groups):
+        input_value = st.text_input(
+            f"**Check Group {i+1}**: Enter comma-separated variations",
+            placeholder="e.g., laptop, laptops" if i > 0 else "e.g., samsung",
+            key=f"check_group_{i}" # Unique key is crucial for dynamic widgets
+        )
+        check_group_inputs.append(input_value)
     
-    submitted = st.form_submit_button("Analyze Assortment")
+    submitted = st.form_submit_button("Analyze Assortment", type="primary")
 
 # --- 3. EXECUTE AND DISPLAY RESULTS ---
 if submitted:
     # Basic validation
-    if not all([shop_id, search_keyword_input, check_keyword_input]):
-        st.warning("Please fill in all the required fields: Shop ID, Search Keyword, and Check Keywords.")
+    if not all([shop_id, search_keyword_input] + check_group_inputs):
+        st.warning("Please fill in all the required fields: Shop ID, Search Keyword, and all Check Groups.")
     else:
         # Process inputs
         search_keyword = search_keyword_input.strip()
-        check_variations = [kw.strip().lower() for kw in check_keyword_input.split(',')]
 
-        # Show a spinner while the analysis is running
+        ## NEW: Process the group inputs into a list of lists
+        check_groups = [
+            [kw.strip().lower() for kw in group_str.split(',')]
+            for group_str in check_group_inputs if group_str.strip()
+        ]
+
         with st.spinner(f"Fetching top {search_result_size} results for '{search_keyword}'..."):
             analysis_result = run_analysis(
-                shop_id.strip(), 
-                environment, 
-                search_keyword, 
-                check_variations, 
+                shop_id.strip(),
+                environment,
+                search_keyword,
+                check_groups,
                 search_result_size
             )
 
         st.subheader("📊 Assortment Quality Report")
-        
-        # Display results or errors
+
         if analysis_result["status"] == "error":
             st.error(f"**Error:** {analysis_result['message']}")
-        
+
         elif analysis_result["status"] == "success":
-            # --- 5. DISPLAY THE REPORT ---
+            st.markdown(f"**Search Term:** `{search_keyword}`")
+
+            ## NEW: Display the check groups that were used in the analysis
+            st.markdown("**Checked For Products Containing ALL of these concepts:**")
+            for i, group in enumerate(check_groups):
+                # Format for display: ' OR '.join(...)
+                st.markdown(f"- **Group {i+1}:** `{'` OR `'.join(group)}`")
+
             total = analysis_result['total_products']
             relevant = analysis_result['relevant_count']
             irrelevant_list = analysis_result['irrelevant_products']
-            
+
             relevance_percentage = (relevant / total * 100) if total > 0 else 0
-            
-            st.markdown(f"**Search Term:** `{search_keyword}`")
-            st.markdown(f"**Checked For Variations Of:** `{check_keyword_input}`")
 
             col1, col2 = st.columns(2)
-            col1.metric(
-                label="Relevance Score", 
-                value=f"{relevant} / {total}",
-                help="The number of products containing at least one of the 'check for' keywords."
-            )
-            col2.metric(
-                label="Relevance Percentage", 
-                value=f"{relevance_percentage:.1f}%"
-            )
+            col1.metric("Relevance Score", f"{relevant} / {total}")
+            col2.metric("Relevance Percentage", f"{relevance_percentage:.1f}%")
 
             if irrelevant_list:
-                st.markdown(f"---")
-                st.error(f"🚨 Found {len(irrelevant_list)} irrelevant products (out of {total} results):")
-                
-                # Use pandas DataFrame for a clean, sortable table
+                st.markdown("---")
+                st.error(f"🚨 Found {len(irrelevant_list)} irrelevant products:")
                 df = pd.DataFrame(irrelevant_list)
                 st.dataframe(df, use_container_width=True)
             else:
