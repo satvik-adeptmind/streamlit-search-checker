@@ -80,7 +80,7 @@ def run_analysis(shop_id, environment, search_keyword, check_variations, result_
 # --- Streamlit User Interface ---
 
 st.title("🤖 Search Assortment Quality Checker")
-st.markdown("Use this tool to check the relevance of search results from the Adeptmind API.")
+st.markdown("Only use this tool to check for the word that you would have to search in payload of each product for keywords with large number of products")
 
 # --- 1. CONFIGURATION (in the sidebar) ---
 st.sidebar.header("⚙️ Configuration")
