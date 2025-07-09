@@ -17,7 +17,7 @@ def run_analysis(shop_id, environment, search_keyword, check_groups, result_size
     Performs a search API call and analyzes the results for relevance.
     Also formats product data for external LLM analysis.
     """
-    url = f"http://dlp-{environment}-search-api.retail.adeptmind.ai:4000/search?shop_id={shop_id}"
+    url = f'https://search-{environment}-dlp-adept-search.search-prod.adeptmind.app/search?shop_id={shop_id}'
     headers = {'Content-Type': 'application/json'}
     payload = {
         "query": search_keyword,
