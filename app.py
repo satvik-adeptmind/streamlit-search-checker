@@ -3,7 +3,7 @@ import requests
 import json
 import pandas as pd
 from collections import Counter
-
+import re
 # Page configuration
 st.set_page_config(
     page_title="Advanced Search Quality Checker",
@@ -37,7 +37,7 @@ def run_analysis(shop_id, environment, search_keyword, check_groups, result_size
         irrelevant_products_data = []
         relevant_products_data = []
         failure_reason_counter = Counter()
-        llm_formatted_texts = [] # <-- NEW: List to hold formatted text for LLM
+        llm_formatted_texts = [] #List to hold formatted text for LLM
 
         for i, product_payload in enumerate(products):
             # --- LLM Data Extraction (NEW) ---
@@ -50,7 +50,9 @@ description: {description}"""
             # --- End of new extraction ---
 
             product_as_string = json.dumps(product_payload).lower()
-            
+            product_as_string = product_as_string.replace('\\u00a0', ' ')
+            product_as_string = product_as_string.replace('  ', ' ')
+
             failed_group_indices = []
             for group_idx, group_variations in enumerate(check_groups):
                 if not any(variation in product_as_string for variation in group_variations):
@@ -82,7 +84,7 @@ description: {description}"""
             "relevant_products": relevant_products_data,
             "irrelevant_products": irrelevant_products_data,
             "failure_summary": failure_reason_counter,
-            "llm_formatted_output": final_llm_output # <-- NEW: Add to return dictionary
+            "llm_formatted_output": final_llm_output #Add to return dictionary
         }
 
     except requests.exceptions.HTTPError as e:
@@ -92,7 +94,7 @@ description: {description}"""
     except Exception as e:
         return {"status": "error", "message": f"An unexpected error occurred: {e}"}
 
-# --- Streamlit UI (No changes needed here) ---
+# --- Streamlit UI---
 st.title("🔎 Word Checker")
 st.markdown("Use this tool to check if search results contain **all** the required 'word' groups.")
 
@@ -178,7 +180,7 @@ if submitted:
                 
                 st.markdown("---")
 
-                # --- NEW: Add the expander for LLM output ---
+                # --- Add the expander for LLM output ---
                 with st.expander("📋 Formatted Output for LLM Analysis", expanded=False):
                     llm_output = analysis_result.get("llm_formatted_output", "No output generated.")
                     st.text_area(
@@ -191,7 +193,6 @@ if submitted:
                 
                 col_irrelevant, col_relevant = st.columns(2)
                 with col_irrelevant:
-                    # ... (rest of the code is unchanged)
                     if irrelevant_list:
                         st.error(f"🚨 Found {len(irrelevant_list)} Irrelevant Products")
                         with st.expander("Show Failure Analysis"):
