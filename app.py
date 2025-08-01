@@ -49,7 +49,8 @@ description: {description}"""
             llm_formatted_texts.append(product_text_for_llm)
             # --- End of new extraction ---
 
-            product_as_string = json.dumps(product_payload).lower()
+            product_as_string = json.dumps(product_payload, ensure_ascii=False).lower()
+            product_as_string = product_as_string.replace('\u00a0', ' ') 
             product_as_string = product_as_string.replace('\\u00a0', ' ')
             product_as_string = product_as_string.replace('  ', ' ')
 
