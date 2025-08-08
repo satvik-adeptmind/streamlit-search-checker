@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 # Main analysis function
-def run_analysis(shop_id, environment, search_keyword, check_groups, result_size, match_type):
+def run_analysis(shop_id, environment, search_keyword, check_groups, match_types, result_size):
     """
     Performs a search API call and analyzes the results for relevance.
     Also formats product data for external LLM analysis.
@@ -41,14 +41,13 @@ def run_analysis(shop_id, environment, search_keyword, check_groups, result_size
         llm_formatted_texts = [] #List to hold formatted text for LLM
 
         for i, product_payload in enumerate(products):
-            # --- LLM Data Extraction (NEW) ---
+            # --- LLM Data Extraction ---
             title = product_payload.get('title', 'N/A')
             description = product_payload.get('description', 'N/A')
             product_text_for_llm = f"""prod {i + 1}:
 title: {title}
 description: {description}"""
             llm_formatted_texts.append(product_text_for_llm)
-            # --- End of new extraction ---
 
             product_as_string = json.dumps(product_payload, ensure_ascii=False).lower()
             product_as_string = product_as_string.replace('\u00a0', ' ')
@@ -56,14 +55,16 @@ description: {description}"""
             product_as_string = product_as_string.replace('  ', ' ')
 
             failed_group_indices = []
+            # --- MODIFIED: Check each group with its specific match type ---
             for group_idx, group_variations in enumerate(check_groups):
+                match_type_for_group = match_types[group_idx]
                 match_found = False
                 for variation in group_variations:
-                    if match_type == 'Text Contains':
+                    if match_type_for_group == 'Text Contains':
                         if variation in product_as_string:
                             match_found = True
                             break
-                    elif match_type == 'Text Equals To':
+                    elif match_type_for_group == 'Text Equals':
                         if re.search(r'\b' + re.escape(variation) + r'\b', product_as_string):
                             match_found = True
                             break
@@ -74,21 +75,20 @@ description: {description}"""
                 relevant_products_data.append({
                     "Position": i + 1,
                     "Product ID": product_payload.get('product_id', 'N/A'),
-                    "Product Name": title # Use the extracted title
+                    "Product Name": title
                 })
             else:
                 irrelevant_products_data.append({
                     "Position": i + 1,
                     "Product ID": product_payload.get('product_id', 'N/A'),
-                    "Product Name": title, # Use the extracted title
+                    "Product Name": title,
                     "failed_indices": failed_group_indices
                 })
                 failure_reason_counter.update(failed_group_indices)
 
-        # --- Format Final LLM Output (NEW) ---
+        # --- Format Final LLM Output ---
         final_llm_output = f"search term: {search_keyword}\n\n"
         final_llm_output += "\n\n".join(llm_formatted_texts)
-        # --- End of formatting ---
 
         return {
             "status": "success",
@@ -96,7 +96,7 @@ description: {description}"""
             "relevant_products": relevant_products_data,
             "irrelevant_products": irrelevant_products_data,
             "failure_summary": failure_reason_counter,
-            "llm_formatted_output": final_llm_output #Add to return dictionary
+            "llm_formatted_output": final_llm_output
         }
 
     except requests.exceptions.HTTPError as e:
@@ -106,7 +106,7 @@ description: {description}"""
     except Exception as e:
         return {"status": "error", "message": f"An unexpected error occurred: {e}"}
 
-# --- Streamlit UI---
+# --- Streamlit UI ---
 st.title("🔎 Word Checker")
 st.markdown("Use this tool to check if search results contain **all** the required 'word' groups.")
 
@@ -115,24 +115,24 @@ with st.sidebar:
     shop_id = st.text_input("Shop ID", value="")
     environment = st.selectbox("Environment", ["prod", "staging"], index=0)
     search_result_size = st.number_input("Search Result Size", min_value=1, max_value=1000, value=500)
-    match_type = st.radio(
-        "Select Match Type",
-        ("Text Contains", "Text Equals To"),
-        help="**Text Contains:** Checks if the keyword appears anywhere in the product data. \n\n**Text Equals To:** Checks if the keyword appears as a whole word."
-    )
 
+    # --- MODIFIED: State management for match types synchronized with check groups ---
     st.header("Check Group Management")
     if 'check_groups_state' not in st.session_state:
         st.session_state.check_groups_state = [""]
+        st.session_state.match_types_state = ["Text Contains"] # Default match type
 
     def add_check_group():
         st.session_state.check_groups_state.append("")
+        st.session_state.match_types_state.append("Text Contains") # Add default match type for new group
 
     def remove_check_group(index):
         st.session_state.check_groups_state.pop(index)
+        st.session_state.match_types_state.pop(index) # Remove corresponding match type
 
     def reset_check_groups():
         st.session_state.check_groups_state = [""]
+        st.session_state.match_types_state = ["Text Contains"]
 
     st.button("Add another check group", on_click=add_check_group, use_container_width=True)
     st.button("Reset to 1 check group", on_click=reset_check_groups, use_container_width=True)
@@ -140,17 +140,27 @@ with st.sidebar:
 st.subheader("Required Concepts")
 st.markdown("A product is relevant **only if it contains a match from EACH group below**.")
 
+# --- MODIFIED: UI for per-group match type selection ---
 for i in range(len(st.session_state.check_groups_state)):
-    col1, col2 = st.columns([4, 1])
+    st.markdown(f"**Check Group {i+1}**")
+    col1, col2, col3 = st.columns([4, 2, 1])
     with col1:
         st.session_state.check_groups_state[i] = st.text_input(
-            f"**Check Group {i+1}**: Comma-separated variations",
+            "Comma-separated variations",
             value=st.session_state.check_groups_state[i],
             key=f"check_group_input_{i}",
             label_visibility="collapsed",
-            placeholder=f"Group {i+1}: e.g., hdr10+, hdr 10+, hdr 10plus"
+            placeholder=f"e.g., hdr10+, hdr 10+, hdr 10plus"
         )
     with col2:
+        st.session_state.match_types_state[i] = st.radio(
+            "Match Type",
+            options=["Text Contains", "Text Equals"],
+            key=f"match_type_{i}",
+            horizontal=True,
+            label_visibility="collapsed"
+        )
+    with col3:
         if len(st.session_state.check_groups_state) > 1:
             st.button(f"🗑️ Delete", key=f"del_{i}", on_click=remove_check_group, args=(i,), use_container_width=True)
 
@@ -172,12 +182,14 @@ if submitted:
     else:
         search_keyword = search_keyword_input.strip()
         check_groups = [ [kw.strip().lower() for kw in group_str.split(',')] for group_str in check_group_inputs if group_str.strip() ]
+        match_types = st.session_state.match_types_state # Get the list of match types
         
         if not check_groups:
              st.error("You must define at least one valid check group.")
         else:
             with st.spinner(f"Analyzing top {search_result_size} results for '{search_keyword}'..."):
-                analysis_result = run_analysis(shop_id.strip(), environment, search_keyword, check_groups, search_result_size, match_type)
+                # --- MODIFIED: Pass the list of match types to the analysis function ---
+                analysis_result = run_analysis(shop_id.strip(), environment, search_keyword, check_groups, match_types, search_result_size)
 
             st.subheader("📊 Assortment Quality")
 
@@ -196,8 +208,7 @@ if submitted:
                 col2.metric("Relevance Percentage", f"{relevance_percentage:.1f}%")
                 
                 st.markdown("---")
-
-                # --- Add the expander for LLM output ---
+                
                 with st.expander("📋 Formatted Output for LLM Analysis", expanded=False):
                     llm_output = analysis_result.get("llm_formatted_output", "No output generated.")
                     st.text_area(
@@ -206,7 +217,6 @@ if submitted:
                         height=400,
                         key="llm_output_textarea"
                     )
-                # --- End of new section ---
                 
                 col_irrelevant, col_relevant = st.columns(2)
                 with col_irrelevant:
