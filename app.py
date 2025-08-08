@@ -4,6 +4,7 @@ import json
 import pandas as pd
 from collections import Counter
 import re
+
 # Page configuration
 st.set_page_config(
     page_title="Advanced Search Quality Checker",
@@ -12,7 +13,7 @@ st.set_page_config(
 )
 
 # Main analysis function
-def run_analysis(shop_id, environment, search_keyword, check_groups, result_size):
+def run_analysis(shop_id, environment, search_keyword, check_groups, result_size, match_type):
     """
     Performs a search API call and analyzes the results for relevance.
     Also formats product data for external LLM analysis.
@@ -50,13 +51,23 @@ description: {description}"""
             # --- End of new extraction ---
 
             product_as_string = json.dumps(product_payload, ensure_ascii=False).lower()
-            product_as_string = product_as_string.replace('\u00a0', ' ') 
+            product_as_string = product_as_string.replace('\u00a0', ' ')
             product_as_string = product_as_string.replace('\\u00a0', ' ')
             product_as_string = product_as_string.replace('  ', ' ')
 
             failed_group_indices = []
             for group_idx, group_variations in enumerate(check_groups):
-                if not any(variation in product_as_string for variation in group_variations):
+                match_found = False
+                for variation in group_variations:
+                    if match_type == 'Text Contains':
+                        if variation in product_as_string:
+                            match_found = True
+                            break
+                    elif match_type == 'Text Equals To':
+                        if re.search(r'\b' + re.escape(variation) + r'\b', product_as_string):
+                            match_found = True
+                            break
+                if not match_found:
                     failed_group_indices.append(group_idx)
 
             if not failed_group_indices:
@@ -104,6 +115,11 @@ with st.sidebar:
     shop_id = st.text_input("Shop ID", value="")
     environment = st.selectbox("Environment", ["prod", "staging"], index=0)
     search_result_size = st.number_input("Search Result Size", min_value=1, max_value=1000, value=500)
+    match_type = st.radio(
+        "Select Match Type",
+        ("Text Contains", "Text Equals To"),
+        help="**Text Contains:** Checks if the keyword appears anywhere in the product data. \n\n**Text Equals To:** Checks if the keyword appears as a whole word."
+    )
 
     st.header("Check Group Management")
     if 'check_groups_state' not in st.session_state:
@@ -161,7 +177,7 @@ if submitted:
              st.error("You must define at least one valid check group.")
         else:
             with st.spinner(f"Analyzing top {search_result_size} results for '{search_keyword}'..."):
-                analysis_result = run_analysis(shop_id.strip(), environment, search_keyword, check_groups, search_result_size)
+                analysis_result = run_analysis(shop_id.strip(), environment, search_keyword, check_groups, search_result_size, match_type)
 
             st.subheader("📊 Assortment Quality")
 
