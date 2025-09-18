@@ -11,14 +11,17 @@ st.set_page_config(
     page_icon="🔎",
     layout="wide"
 )
-
 # Main analysis function
 def run_analysis(shop_id, environment, search_keyword, check_groups, match_types, result_size):
     """
     Performs a search API call and analyzes the results for relevance.
     Also formats product data for external LLM analysis.
     """
-    url = f'https://search-{environment}-dlp-adept-search.search-prod.adeptmind.app/search?shop_id={shop_id}'
+    if environment == "staging":
+        url = f'https://search-pre-prod-dlp-adept-search.search-pre-prod.adeptmind.app/search?shop_id={shop_id}'
+    else: # Default to "prod"
+        url = f'https://search-prod-dlp-adept-search.search-prod.adeptmind.app/search?shop_id={shop_id}'
+
     headers = {'Content-Type': 'application/json'}
     payload = {
         "query": search_keyword,
