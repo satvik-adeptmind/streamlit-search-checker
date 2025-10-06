@@ -218,7 +218,6 @@ if submitted:
                         label="Copy the text below to use in an external LLM tool:",
                         value=llm_output,
                         height=400,
-                        key="llm_output_textarea"
                     )
                 
                 col_irrelevant, col_relevant = st.columns(2)
